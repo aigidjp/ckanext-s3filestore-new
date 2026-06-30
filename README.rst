@@ -134,7 +134,18 @@ To upload all local resources located in `ckan.storage_path` location dir to the
    
 To upload all local group/organization assets (pics) located in `ckan.storage_path` location dir to the configured S3 bucket use::
 
-   ckan -c /etc/ckan/default/ckan.ini s3-assets   
+   ckan -c /etc/ckan/default/ckan.ini s3-assets
+
+To migrate resources already in S3 between the regular bucket and the ODSP bucket based on dataset license::
+
+   # Inspect only (default) — reports what is in the wrong bucket without making changes
+   ckan -c /etc/ckan/default/ckan.ini s3-migrate-odsp --mode check
+
+   # Copy to the correct bucket without removing from the wrong bucket
+   ckan -c /etc/ckan/default/ckan.ini s3-migrate-odsp --mode copy
+
+   # Copy to the correct bucket and delete from the wrong bucket
+   ckan -c /etc/ckan/default/ckan.ini s3-migrate-odsp --mode move
 
 
 ------------------------
