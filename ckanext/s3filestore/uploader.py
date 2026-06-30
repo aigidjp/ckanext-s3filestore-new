@@ -45,7 +45,8 @@ class S3FileStoreException(Exception):
 class BaseS3Uploader(object):
 
     def __init__(self):
-        self.bucket_name = config.get('ckanext.s3filestore.aws_bucket_name')
+        self.default_bucket_name = config.get('ckanext.s3filestore.aws_bucket_name')
+        self.bucket_name = self.default_bucket_name
         self.p_key = config.get('ckanext.s3filestore.aws_access_key_id')
         self.s_key = config.get('ckanext.s3filestore.aws_secret_access_key')
         self.region = config.get('ckanext.s3filestore.region_name')
@@ -58,12 +59,30 @@ class BaseS3Uploader(object):
             config.get('ckanext.s3filestore.addressing_style', 'auto')
         self.signed_url_expiry = \
             int(config.get('ckanext.s3filestore.signed_url_expiry', '3600'))
+        self.odsp_bucket_name = config.get(
+            'ckanext.s3filestore.odsp_bucket_name', None)
+        self.odsp_open_license_ids = config.get(
+            'ckanext.s3filestore.odsp_open_license_ids', '').split()
+        self.odsp_p_key = config.get(
+            'ckanext.s3filestore.odsp_aws_access_key_id', None)
+        self.odsp_s_key = config.get(
+            'ckanext.s3filestore.odsp_aws_secret_access_key', None)
+        self.odsp_region = config.get(
+            'ckanext.s3filestore.odsp_region_name', None)
 
     def get_directory(self, id, storage_path):
         directory = os.path.join(storage_path, id)
         return directory
 
+    def _using_odsp_bucket(self):
+        return self.bucket_name == self.odsp_bucket_name and self.odsp_bucket_name
+
     def get_s3_session(self):
+        if self._using_odsp_bucket() and self.odsp_p_key and self.odsp_s_key:
+            return boto3.session.Session(
+                aws_access_key_id=self.odsp_p_key,
+                aws_secret_access_key=self.odsp_s_key,
+                region_name=self.odsp_region or self.region)
         return boto3.session.Session(aws_access_key_id=self.p_key,
                                      aws_secret_access_key=self.s_key,
                                      region_name=self.region)
@@ -78,6 +97,8 @@ class BaseS3Uploader(object):
                               s3={'addressing_style': self.addressing_style}))
 
     def get_s3_client(self):
+        region = (self.odsp_region or self.region
+                  if self._using_odsp_bucket() else self.region)
         return \
             self.get_s3_session()\
                 .client('s3',
@@ -85,7 +106,7 @@ class BaseS3Uploader(object):
                         config=BotoConfig(
                             signature_version=self.signature,
                             s3={'addressing_style': self.addressing_style}),
-                        region_name=self.region)
+                        region_name=region)
 
     def get_s3_bucket(self, bucket_name):
         '''Return a boto bucket, creating it if it doesn't exist.'''
@@ -177,6 +198,13 @@ class BaseS3Uploader(object):
             url = URL_HOST.sub(self.download_proxy + '/', url, 1)
 
         return url
+
+    def get_other_bucket_name(self):
+        if not self.odsp_bucket_name:
+            return None
+        if self.bucket_name == self.odsp_bucket_name:
+            return self.default_bucket_name
+        return self.odsp_bucket_name
 
 
 class S3Uploader(BaseS3Uploader):
@@ -296,6 +324,11 @@ class S3ResourceUploader(BaseS3Uploader):
         self.storage_path = os.path.join(path, 'resources')
         self.filename = None
         self.old_filename = None
+
+        if self.odsp_bucket_name and self.odsp_open_license_ids:
+            package = model.Package.get(resource.get('package_id'))
+            if package and package.license_id in self.odsp_open_license_ids:
+                self.bucket_name = self.odsp_bucket_name
 
         upload_field_storage = resource.pop('upload', None)
         self.clear = resource.pop('clear_upload', None)

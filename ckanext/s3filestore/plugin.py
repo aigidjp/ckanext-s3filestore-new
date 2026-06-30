@@ -49,6 +49,11 @@ class S3FileStorePlugin(plugins.SingletonPlugin):
                            True)):
             ckanext.s3filestore.uploader.BaseS3Uploader().get_s3_bucket(
                 config.get('ckanext.s3filestore.aws_bucket_name'))
+            odsp_bucket = config.get('ckanext.s3filestore.odsp_bucket_name')
+            if odsp_bucket:
+                odsp_uploader = ckanext.s3filestore.uploader.BaseS3Uploader()
+                odsp_uploader.bucket_name = odsp_bucket
+                odsp_uploader.get_s3_bucket(odsp_bucket)
 
     # IUploader
 

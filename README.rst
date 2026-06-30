@@ -111,6 +111,18 @@ Optional::
     # Don't check for access on each startup
     ckanext.s3filestore.check_access_on_startup = false
 
+    # AWS Open Data Sponsorship Program (ODSP) settings.
+    # When odsp_bucket_name is set, resources whose dataset license is listed in
+    # odsp_open_license_ids are stored in this bucket. On download, if the file
+    # is not found in the expected bucket, the other bucket is tried as fallback.
+    ckanext.s3filestore.odsp_bucket_name = my-odsp-bucket
+    ckanext.s3filestore.odsp_open_license_ids = cc-by cc-zero odc-pddl odc-odbl
+    # ODSP-specific AWS credentials and region (provided by AWS upon ODSP enrollment).
+    # If not set, the default aws_access_key_id / aws_secret_access_key / region_name are used.
+    ckanext.s3filestore.odsp_aws_access_key_id = Your-ODSP-Access-Key-ID
+    ckanext.s3filestore.odsp_aws_secret_access_key = Your-ODSP-Secret-Access-Key
+    ckanext.s3filestore.odsp_region_name = us-east-1
+
 
 -----------------
 CLI

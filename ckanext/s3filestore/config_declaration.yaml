@@ -40,8 +40,41 @@ groups:
       - key: ckanext.s3filestore.aws_use_ami_role
         example: true
         type: bool
-        default: 
+        default:
         description: |
             Indicates whether the S3 client should use the IAM role
             attached to the Amazon EC2 instance or authentication
             instead of explicit AWS credentials
+      - key: ckanext.s3filestore.odsp_bucket_name
+        example: my-odsp-bucket
+        default:
+        description: |
+            S3 bucket name for the AWS Open Data Sponsorship Program (ODSP).
+            When set, resources whose dataset license matches one of the IDs
+            in ckanext.s3filestore.odsp_open_license_ids will be stored in
+            this bucket instead of the default aws_bucket_name bucket.
+      - key: ckanext.s3filestore.odsp_open_license_ids
+        example: cc-by cc-zero odc-pddl odc-odbl
+        default:
+        description: |
+            Space-separated list of CKAN license IDs treated as open licenses
+            for the AWS ODSP bucket. Resources belonging to datasets with these
+            licenses will be uploaded to ckanext.s3filestore.odsp_bucket_name.
+      - key: ckanext.s3filestore.odsp_aws_access_key_id
+        example: Your-ODSP-Access-Key-ID
+        default:
+        description: |
+            AWS Access Key ID for the ODSP bucket account. If not set, the
+            default aws_access_key_id is used.
+      - key: ckanext.s3filestore.odsp_aws_secret_access_key
+        example: Your-ODSP-Secret-Access-Key
+        default:
+        description: |
+            AWS Secret Access Key for the ODSP bucket account. If not set,
+            the default aws_secret_access_key is used.
+      - key: ckanext.s3filestore.odsp_region_name
+        example: us-east-1
+        default:
+        description: |
+            AWS region where the ODSP bucket is located. If not set, the
+            default region_name is used.

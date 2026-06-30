@@ -65,20 +65,32 @@ def resource_download(package_type, id, resource_id, filename=None):
             log.warn('Key \'{0}\' not found in bucket \'{1}\''
                      .format(key_path, upload.bucket_name))
 
+        s3_params = {} if preview else {
+            'ResponseContentDisposition': 'attachment; filename=' + filename,
+        }
+
         try:
-            if preview:
-                url = upload.get_signed_url_to_key(key_path)
-            else:
-                params = {
-                    'ResponseContentDisposition':
-                        'attachment; filename=' + filename,
-                }
-                url = upload.get_signed_url_to_key(key_path, params)
+            url = upload.get_signed_url_to_key(key_path, s3_params)
             return redirect(url)
 
         except ClientError as ex:
             if ex.response['Error']['Code'] in ['NoSuchKey', '404']:
-                # attempt fallback
+                other_bucket = upload.get_other_bucket_name()
+                if other_bucket:
+                    log.info(
+                        'Key not found in bucket {0}, trying {1} '
+                        'for resource {2}'.format(
+                            upload.bucket_name, other_bucket, resource_id))
+                    upload.bucket_name = other_bucket
+                    try:
+                        url = upload.get_signed_url_to_key(key_path, s3_params)
+                        return redirect(url)
+                    except ClientError as ex2:
+                        if ex2.response['Error']['Code'] \
+                                not in ['NoSuchKey', '404']:
+                            raise ex2
+
+                # attempt filesystem fallback
                 if ckan_config.get(
                         'ckanext.s3filestore.filesystem_download_fallback',
                         False):
