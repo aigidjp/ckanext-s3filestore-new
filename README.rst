@@ -166,14 +166,34 @@ do::
 Running the Tests
 -----------------
 
-To run the tests, do::
+Tests are also run automatically on GitHub Actions (see ``.github/workflows/ci.yml``).
 
-    nosetests --ckan --nologcapture --with-pylons=test.ini
+To run tests locally, a ``docker-compose.test.yml`` is provided that starts
+CKAN, PostgreSQL, Solr, Redis, and a Moto S3 mock server as Docker containers.
 
-To run the tests and produce a coverage report, first make sure you have
-coverage installed in your virtualenv (``pip install coverage``) then run::
+Start the infrastructure services::
 
-    nosetests --ckan --nologcapture --with-pylons=test.ini --with-coverage --cover-package=ckanext.s3filestore --cover-inclusive --cover-erase --cover-tests
+    docker compose -f docker-compose.test.yml up -d db solr redis moto
+
+Run the full test suite::
+
+    docker compose -f docker-compose.test.yml run --rm ckan-test bash bin/run-tests.sh
+
+Run a specific test file::
+
+    docker compose -f docker-compose.test.yml run --rm ckan-test bash bin/run-tests.sh ckanext/s3filestore/tests/test_upload.py
+
+Open an interactive shell for debugging::
+
+    docker compose -f docker-compose.test.yml run --rm ckan-test bash
+
+Stop and remove the containers when done::
+
+    docker compose -f docker-compose.test.yml down
+
+To measure test coverage, pass ``--cov`` to pytest via the script arguments::
+
+    docker compose -f docker-compose.test.yml run --rm ckan-test bash bin/run-tests.sh --cov=ckanext.s3filestore
 
 
 ---------------------------------------

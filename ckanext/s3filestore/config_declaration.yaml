@@ -55,7 +55,7 @@ groups:
             this bucket instead of the default aws_bucket_name bucket.
       - key: ckanext.s3filestore.odsp_open_license_ids
         example: cc-by cc-zero odc-pddl odc-odbl
-        default:
+        default: ""
         description: |
             Space-separated list of CKAN license IDs treated as open licenses
             for the AWS ODSP bucket. Resources belonging to datasets with these

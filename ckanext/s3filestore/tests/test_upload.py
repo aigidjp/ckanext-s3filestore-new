@@ -13,7 +13,7 @@ from ckanext.s3filestore.uploader import S3Uploader
 from ckanext.s3filestore.uploader import S3ResourceUploader
 
 
-@pytest.mark.usefixtures(u'clean_db', u'clean_index')
+@pytest.mark.usefixtures(u'clean_db', u'clean_index', u'with_plugins')
 class TestS3ResourceUpload(object):
 
     @classmethod

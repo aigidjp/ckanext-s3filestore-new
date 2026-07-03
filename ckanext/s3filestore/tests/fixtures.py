@@ -55,3 +55,35 @@ def organization_with_image(create_with_upload):
         name=u"test-org"
     )
     return org
+
+
+@pytest.fixture
+def ckan_config_dynamic(request, monkeypatch):
+    """Override CKAN config values including declared extension options.
+
+    Use with @pytest.mark.ckan_config_dynamic(key, value) on a test or class.
+    Patches CKANConfig.get() at the class level so that declared plugin options
+    (which bypass the raw config dict) are intercepted before the registry lookup.
+    """
+    # iter_markers yields method-level first; reversing lets method-level
+    # markers override class-level ones when the same key appears in both.
+    overrides = {}
+    for mark in reversed(list(request.node.iter_markers('ckan_config_dynamic'))):
+        overrides[mark.args[0]] = mark.args[1]
+    if not overrides:
+        return
+
+    import ckan.common
+    config_class = type(ckan.common.config)
+    if 'get' in config_class.__dict__:
+        original_get = config_class.__dict__['get']
+
+        def patched_get(self, key, *args, **kwargs):
+            if key in overrides:
+                return overrides[key]
+            return original_get(self, key, *args, **kwargs)
+
+        monkeypatch.setattr(config_class, 'get', patched_get)
+    else:
+        for key, value in overrides.items():
+            monkeypatch.setitem(ckan.common.config, key, value)
