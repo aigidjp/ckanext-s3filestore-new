@@ -1,0 +1,3 @@
+[flake8]
+per-file-ignores =
+    ckanext/s3filestore/views/resource.py: C901
