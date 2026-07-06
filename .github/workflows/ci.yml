@@ -2,7 +2,9 @@ name: CI
 
 on:
   push:
-    branches: main
+    branches:
+      - main
+      - 'feature/**'
     tags:
       - 'v*'
   pull_request:
@@ -99,7 +101,8 @@ jobs:
               region_name=os.environ["AWS_DEFAULT_REGION"],
           )
           s3.create_bucket(Bucket="test-bucket")
-          print("✅ Created test-bucket in Moto")
+          s3.create_bucket(Bucket="test-odsp-bucket")
+          print("✅ Created test-bucket and test-odsp-bucket in Moto")
           EOF
 
       - name: Run all tests
