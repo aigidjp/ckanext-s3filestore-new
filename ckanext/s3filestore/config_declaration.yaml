@@ -11,18 +11,18 @@ groups:
         required: true
       - key: ckanext.s3filestore.aws_access_key_id
         example: Your-Access-Key-ID
-        default: 
+        default:
         description: |
             Specifies the AWS Access Key ID used for
-            authenticating requests to the S3 bucket
-        required: true
+            authenticating requests to the S3 bucket. Not required when
+            ckanext.s3filestore.aws_use_ami_role is enabled.
       - key: ckanext.s3filestore.aws_secret_access_key
         example: Your-Secret-Access-Key
-        default: 
+        default:
         description: |
             Specifies the AWS Secret Access Key associated with the IAM
-            credentials used to authenticate access to the S3 bucket.
-        required: true
+            credentials used to authenticate access to the S3 bucket. Not
+            required when ckanext.s3filestore.aws_use_ami_role is enabled.
       - key: ckanext.s3filestore.region_name
         example: us-east-2
         default: 
