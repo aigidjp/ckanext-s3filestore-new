@@ -77,15 +77,21 @@ class BaseS3Uploader(object):
     def _using_odsp_bucket(self):
         return self.bucket_name == self.odsp_bucket_name and self.odsp_bucket_name
 
+    def _get_region(self):
+        if self._using_odsp_bucket():
+            return self.odsp_region or self.region
+        return self.region
+
     def get_s3_session(self):
+        region = self._get_region()
         if self._using_odsp_bucket() and self.odsp_p_key and self.odsp_s_key:
             return boto3.session.Session(
                 aws_access_key_id=self.odsp_p_key,
                 aws_secret_access_key=self.odsp_s_key,
-                region_name=self.odsp_region or self.region)
+                region_name=region)
         return boto3.session.Session(aws_access_key_id=self.p_key,
                                      aws_secret_access_key=self.s_key,
-                                     region_name=self.region)
+                                     region_name=region)
 
     def get_s3_resource(self):
         return \
@@ -97,8 +103,7 @@ class BaseS3Uploader(object):
                               s3={'addressing_style': self.addressing_style}))
 
     def get_s3_client(self):
-        region = (self.odsp_region or self.region
-                  if self._using_odsp_bucket() else self.region)
+        region = self._get_region()
         return \
             self.get_s3_session()\
                 .client('s3',
