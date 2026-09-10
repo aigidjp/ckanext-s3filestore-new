@@ -117,6 +117,8 @@ Optional::
     # is not found in the expected bucket, the other bucket is tried as fallback.
     ckanext.s3filestore.odsp_bucket_name = my-odsp-bucket
     ckanext.s3filestore.odsp_open_license_ids = cc-by cc-zero odc-pddl odc-odbl
+    # License IDs containing spaces can be quoted, e.g.:
+    # ckanext.s3filestore.odsp_open_license_ids = cc-by "CC BY 2.1" cc-zero
     # ODSP-specific AWS credentials and region (provided by AWS upon ODSP enrollment).
     # If not set, the default aws_access_key_id / aws_secret_access_key / region_name are used.
     ckanext.s3filestore.odsp_aws_access_key_id = Your-ODSP-Access-Key-ID

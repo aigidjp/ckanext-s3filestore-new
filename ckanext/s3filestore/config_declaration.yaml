@@ -60,6 +60,8 @@ groups:
             Space-separated list of CKAN license IDs treated as open licenses
             for the AWS ODSP bucket. Resources belonging to datasets with these
             licenses will be uploaded to ckanext.s3filestore.odsp_bucket_name.
+            License IDs containing spaces can be quoted, e.g.
+            cc-by "CC BY 2.1" cc-zero.
       - key: ckanext.s3filestore.odsp_aws_access_key_id
         example: Your-ODSP-Access-Key-ID
         default:

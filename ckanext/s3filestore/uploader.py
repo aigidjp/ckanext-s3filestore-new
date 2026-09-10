@@ -4,6 +4,7 @@ import cgi
 import logging
 import datetime
 import mimetypes
+import shlex
 import magic
 
 import boto3
@@ -61,8 +62,8 @@ class BaseS3Uploader(object):
             int(config.get('ckanext.s3filestore.signed_url_expiry', '3600'))
         self.odsp_bucket_name = config.get(
             'ckanext.s3filestore.odsp_bucket_name', None)
-        self.odsp_open_license_ids = config.get(
-            'ckanext.s3filestore.odsp_open_license_ids', '').split()
+        self.odsp_open_license_ids = shlex.split(
+            config.get('ckanext.s3filestore.odsp_open_license_ids', ''))
         self.odsp_p_key = config.get(
             'ckanext.s3filestore.odsp_aws_access_key_id', None)
         self.odsp_s_key = config.get(
