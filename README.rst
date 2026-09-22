@@ -149,6 +149,20 @@ To migrate resources already in S3 between the regular bucket and the ODSP bucke
    # Copy to the correct bucket and delete from the wrong bucket
    ckan -c /etc/ckan/default/ckan.ini s3-migrate-odsp --mode move
 
+Running ``s3-migrate-odsp`` with ``--mode copy`` or ``--mode move`` first tries a
+server-side S3 copy (via ``client.copy``), which never transfers object data
+through the host running the command. This requires
+the destination bucket's credentials to have read access to the source bucket,
+which may not be the case when the regular and ODSP buckets use different
+credentials/accounts. ``--mode check`` never copies anything, so this does not
+apply to it. If the server-side copy is denied, pass ``--allow-download-fallback``
+to fall back to downloading the object and re-uploading it instead of aborting::
+
+   ckan -c /etc/ckan/default/ckan.ini s3-migrate-odsp --mode move --allow-download-fallback
+
+This fallback is off by default because it is much slower and, unlike the
+server-side copy, incurs data transfer cost.
+
 
 ------------------------
 Development Installation

@@ -31,6 +31,39 @@ def _object_exists(client, bucket, key):
         raise
 
 
+def _copy_object(wrong_client, wrong_bucket, correct_client, correct_bucket,
+                 key, acl, allow_download_fallback):
+    '''Copy an object between buckets, preferring a server-side S3 copy.
+
+    A server-side copy (via correct_client.copy) never transfers the
+    object's bytes through this host, but it requires correct_client's
+    credentials to have read access to the source bucket. When the two
+    buckets belong to different accounts/credentials, that read may be
+    denied; in that case fall back to downloading and re-uploading the
+    object, but only if the caller explicitly allowed it, since that
+    fallback is far more expensive in time and data transfer cost.
+    '''
+    try:
+        correct_client.copy(
+            {u'Bucket': wrong_bucket, u'Key': key},
+            correct_bucket, key,
+            ExtraArgs={u'ACL': acl},
+            SourceClient=wrong_client)
+        return u'server-side copy'
+    except ClientError as e:
+        if not (allow_download_fallback
+                and e.response[u'Error'][u'Code'] in (
+                    u'AccessDenied', u'403')):
+            raise
+
+    response = wrong_client.get_object(Bucket=wrong_bucket, Key=key)
+    content_type = response.get(u'ContentType', u'application/octet-stream')
+    correct_client.upload_fileobj(
+        response[u'Body'], correct_bucket, key,
+        ExtraArgs={u'ContentType': content_type, u'ACL': acl})
+    return u'download/upload fallback'
+
+
 @click.command(u's3-upload',
                short_help=u'Uploads all resources '
                           u'from "ckan.storage_path"'
@@ -164,7 +197,13 @@ def upload_assets():
               help=u'check: inspect only; '
                    u'copy: copy to correct bucket without deleting; '
                    u'move: copy to correct bucket and delete from wrong bucket')
-def migrate_odsp(mode):
+@click.option(u'--allow-download-fallback', is_flag=True, default=False,
+              help=u'If the two buckets use different credentials and a '
+                   u'server-side copy is denied, fall back to downloading '
+                   u'the object and re-uploading it. Off by default because '
+                   u'this fallback is much slower and incurs data transfer '
+                   u'cost.')
+def migrate_odsp(mode, allow_download_fallback):
     if not odsp_bucket_name or not odsp_open_license_ids:
         click.secho(
             u'ckanext.s3filestore.odsp_bucket_name and '
@@ -251,14 +290,12 @@ def migrate_odsp(mode):
             fg=u'yellow', bold=True)
 
         if mode in (u'copy', u'move'):
-            response = wrong_client.get_object(Bucket=wrong_bucket, Key=key)
-            content_type = response.get(u'ContentType', u'application/octet-stream')
-            correct_client.upload_fileobj(
-                response[u'Body'], correct_bucket, key,
-                ExtraArgs={u'ContentType': content_type, u'ACL': acl})
+            method = _copy_object(
+                wrong_client, wrong_bucket, correct_client, correct_bucket,
+                key, acl, allow_download_fallback)
             click.secho(
-                u'Copied resource {0} ({1}) to {2}'.format(
-                    resource_id, file_name, correct_bucket),
+                u'Copied resource {0} ({1}) to {2} (via {3})'.format(
+                    resource_id, file_name, correct_bucket, method),
                 fg=u'green', bold=True)
 
             if mode == u'move':

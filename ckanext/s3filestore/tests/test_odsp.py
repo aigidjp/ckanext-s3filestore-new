@@ -191,6 +191,61 @@ class TestMigrateOdspCommand:
         assert self._exists(s3_client, REGULAR_BUCKET, key_non_open)
         assert not self._exists(s3_client, ODSP_BUCKET, key_non_open)
 
+    def _patch_deny_copy(self, monkeypatch):
+        """Make every S3 client's .copy() raise AccessDenied, simulating
+        source and destination buckets whose credentials cannot read each
+        other's bucket."""
+        from ckanext.s3filestore.uploader import BaseS3Uploader
+        original_get_s3_client = BaseS3Uploader.get_s3_client
+
+        class DenyCopyClient(object):
+            def __init__(self, real_client):
+                self._real_client = real_client
+
+            def copy(self, *args, **kwargs):
+                raise ClientError(
+                    {'Error': {'Code': 'AccessDenied', 'Message': 'denied'}},
+                    'CopyObject')
+
+            def __getattr__(self, name):
+                return getattr(self._real_client, name)
+
+        monkeypatch.setattr(
+            BaseS3Uploader, 'get_s3_client',
+            lambda self: DenyCopyClient(original_get_s3_client(self)))
+
+    def test_copy_mode_falls_back_to_download_upload_when_allowed(
+            self, s3_client, create_with_upload, monkeypatch):
+        """When server-side copy is denied, --allow-download-fallback
+        downloads the object and re-uploads it instead."""
+        dataset = factories.Dataset(license_id=OPEN_LICENSE)
+        resource = create_with_upload('content', 'data.csv', package_id=dataset['id'])
+        key = 'resources/{0}/data.csv'.format(resource['id'])
+
+        self._patch_deny_copy(monkeypatch)
+
+        result = CliRunner().invoke(
+            migrate_odsp, ['--mode', 'copy', '--allow-download-fallback'])
+
+        assert result.exit_code == 0, result.output
+        assert 'download/upload fallback' in result.output
+        assert self._exists(s3_client, ODSP_BUCKET, key)
+
+    def test_copy_mode_aborts_when_denied_and_fallback_not_allowed(
+            self, s3_client, create_with_upload, monkeypatch):
+        """Without --allow-download-fallback, a denied server-side copy
+        propagates as an error instead of silently downloading/uploading."""
+        dataset = factories.Dataset(license_id=OPEN_LICENSE)
+        resource = create_with_upload('content', 'data.csv', package_id=dataset['id'])
+        key = 'resources/{0}/data.csv'.format(resource['id'])
+
+        self._patch_deny_copy(monkeypatch)
+
+        result = CliRunner().invoke(migrate_odsp, ['--mode', 'copy'])
+
+        assert result.exit_code != 0
+        assert not self._exists(s3_client, ODSP_BUCKET, key)
+
     def test_check_mode_ok_for_resource_in_correct_bucket(
             self, s3_client, create_with_upload):
         """A non-open-license resource already in the regular bucket is counted as OK."""
