@@ -31,6 +31,52 @@ def _object_exists(client, bucket, key):
         raise
 
 
+def _find_prefix_candidates(resource_id, regular_client, odsp_client):
+    '''List any objects under this resource's folder in either bucket,
+    regardless of filename. Used when the expected key (built from the
+    DB's possibly-stale resource.url) isn't found in either bucket, to
+    tell a filename/metadata mismatch apart from genuine data loss.
+
+    Returns a list of (bucket_label, key, size) tuples.
+    '''
+    prefix = os.path.join(resources_storage_path, resource_id) + u'/'
+    candidates = []
+    for label, bucket, client in (
+            (u'regular', bucket_name, regular_client),
+            (u'odsp', odsp_bucket_name, odsp_client)):
+        response = client.list_objects_v2(Bucket=bucket, Prefix=prefix)
+        for obj in response.get(u'Contents', []):
+            candidates.append((label, obj[u'Key'], obj[u'Size']))
+    return candidates
+
+
+def _classify_missing(candidates, expected_size):
+    '''Classify a resource missing from both buckets based on what (if
+    anything) was found under its resource_id folder.
+
+    Returns (verdict, candidate_bucket, candidate_key, candidate_size),
+    the latter three being ';'-joined strings (empty if no candidates).
+    '''
+    if not candidates:
+        return u'not_found', u'', u'', u''
+
+    candidate_bucket = u';'.join(label for label, key, size in candidates)
+    candidate_key = u';'.join(key for label, key, size in candidates)
+    candidate_size = u';'.join(str(size) for label, key, size in candidates)
+
+    if len(candidates) > 1:
+        return (u'multiple_candidates', candidate_bucket, candidate_key,
+                candidate_size)
+
+    if expected_size is None:
+        return (u'no_expected_size', candidate_bucket, candidate_key,
+                candidate_size)
+
+    if candidates[0][2] == expected_size:
+        return u'size_match', candidate_bucket, candidate_key, candidate_size
+    return u'size_mismatch', candidate_bucket, candidate_key, candidate_size
+
+
 def _copy_object(wrong_client, wrong_bucket, correct_client, correct_bucket,
                  key, acl, allow_download_fallback, no_acl_buckets):
     '''Copy an object between buckets, preferring a server-side S3 copy.
@@ -251,7 +297,7 @@ def migrate_odsp(mode, allow_download_fallback):
 
     try:
         result = connection.execute(text(u'''
-            SELECT r.id, r.url, p.license_id
+            SELECT r.id, r.name, r.url, r.size, p.id, p.title, p.license_id
             FROM resource r
             JOIN package p ON r.package_id = p.id
             WHERE r.url_type = 'upload'
@@ -264,11 +310,17 @@ def migrate_odsp(mode, allow_download_fallback):
     click.secho(
         u'{0} upload resources found in database'.format(len(resources)),
         fg=u'green', bold=True)
+    click.echo(u'\t'.join([
+        u'MISSING_BOTH', u'resource_id', u'resource_name', u'package_id',
+        u'package_title', u'expected_filename', u'expected_size', u'verdict',
+        u'candidate_bucket', u'candidate_key', u'candidate_size',
+    ]))
 
     counts = {u'ok': 0, u'missing_both': 0, u'needs_action': 0, u'in_both': 0}
     no_acl_buckets = set()
 
-    for resource_id, url, license_id in resources:
+    for (resource_id, resource_name, url, resource_size, package_id,
+         package_title, license_id) in resources:
         if not url:
             continue
 
@@ -294,6 +346,18 @@ def migrate_odsp(mode, allow_download_fallback):
                 u'WARNING: resource {0} ({1}) not found in either bucket'.format(
                     resource_id, file_name),
                 fg=u'yellow', bold=True)
+
+            candidates = _find_prefix_candidates(
+                resource_id, regular_client, odsp_client)
+            verdict, candidate_bucket, candidate_key, candidate_size = \
+                _classify_missing(candidates, resource_size)
+            click.echo(u'\t'.join([
+                u'MISSING_BOTH', resource_id, resource_name or u'',
+                package_id, package_title or u'', file_name,
+                u'' if resource_size is None else str(resource_size),
+                verdict, candidate_bucket, candidate_key, candidate_size,
+            ]))
+
             counts[u'missing_both'] += 1
             continue
 

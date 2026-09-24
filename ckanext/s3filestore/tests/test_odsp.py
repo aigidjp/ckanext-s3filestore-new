@@ -101,6 +101,50 @@ class TestS3ResourceUploaderOdspRouting:
 
 
 # ---------------------------------------------------------------------------
+# _classify_missing (used by s3-migrate-odsp to triage missing_both cases)
+# ---------------------------------------------------------------------------
+
+class TestClassifyMissing:
+    """Unit tests for click_commands._classify_missing. No DB/S3 needed."""
+
+    def test_no_candidates_is_not_found(self):
+        verdict, bucket, key, size = click_commands._classify_missing([], 100)
+        assert verdict == 'not_found'
+        assert (bucket, key, size) == ('', '', '')
+
+    def test_single_candidate_matching_size(self):
+        candidates = [('regular', 'resources/abc/file.zip', 100)]
+        verdict, bucket, key, size = \
+            click_commands._classify_missing(candidates, 100)
+        assert verdict == 'size_match'
+        assert bucket == 'regular'
+        assert key == 'resources/abc/file.zip'
+        assert size == '100'
+
+    def test_single_candidate_mismatching_size(self):
+        candidates = [('regular', 'resources/abc/file.zip', 100)]
+        verdict, _, _, _ = click_commands._classify_missing(candidates, 999)
+        assert verdict == 'size_mismatch'
+
+    def test_single_candidate_no_expected_size(self):
+        candidates = [('odsp', 'resources/abc/file.zip', 50)]
+        verdict, _, _, _ = click_commands._classify_missing(candidates, None)
+        assert verdict == 'no_expected_size'
+
+    def test_multiple_candidates(self):
+        candidates = [
+            ('regular', 'resources/abc/file1.zip', 100),
+            ('odsp', 'resources/abc/file2.zip', 200),
+        ]
+        verdict, bucket, key, size = \
+            click_commands._classify_missing(candidates, 100)
+        assert verdict == 'multiple_candidates'
+        assert bucket == 'regular;odsp'
+        assert key == 'resources/abc/file1.zip;resources/abc/file2.zip'
+        assert size == '100;200'
+
+
+# ---------------------------------------------------------------------------
 # s3-migrate-odsp CLI command
 # ---------------------------------------------------------------------------
 
@@ -320,6 +364,62 @@ class TestMigrateOdspCommand:
         assert 'OK: 1' in result.output
         assert 'needs_action: 0' in result.output
         assert self._exists(s3_client, ODSP_BUCKET, key)
+
+    def _missing_both_data_rows(self, output):
+        """MISSING_BOTH lines from command output, excluding the header
+        (whose resource_id column literally reads 'resource_id')."""
+        return [
+            line.split('\t') for line in output.splitlines()
+            if line.startswith('MISSING_BOTH\t')
+            and line.split('\t')[1] != 'resource_id'
+        ]
+
+    def test_check_mode_reports_not_found_when_truly_missing(
+            self, s3_client, create_with_upload):
+        """A resource missing from both buckets, with nothing under its
+        resource_id folder either, is classified as not_found."""
+        dataset = factories.Dataset(license_id=NON_OPEN_LICENSE)
+        resource = create_with_upload('content', 'data.csv', package_id=dataset['id'])
+        key = 'resources/{0}/data.csv'.format(resource['id'])
+        s3_client.delete_object(Bucket=REGULAR_BUCKET, Key=key)
+
+        result = CliRunner().invoke(migrate_odsp, ['--mode', 'check'])
+
+        assert result.exit_code == 0, result.output
+        assert 'missing: 1' in result.output
+        rows = self._missing_both_data_rows(result.output)
+        assert len(rows) == 1
+        assert rows[0][1] == resource['id']
+        assert rows[0][7] == 'not_found'
+        assert rows[0][8:] == ['', '', '']
+
+    def test_check_mode_detects_likely_metadata_mismatch(
+            self, s3_client, create_with_upload):
+        """When the expected key is missing but a differently-named
+        object of the same size sits under the resource_id folder, that
+        is reported as size_match (likely a metadata/filename mismatch
+        rather than genuine data loss)."""
+        dataset = factories.Dataset(license_id=NON_OPEN_LICENSE)
+        resource = create_with_upload('content', 'data.csv', package_id=dataset['id'])
+        key = 'resources/{0}/data.csv'.format(resource['id'])
+        size = s3_client.head_object(
+            Bucket=REGULAR_BUCKET, Key=key)['ContentLength']
+
+        s3_client.delete_object(Bucket=REGULAR_BUCKET, Key=key)
+        renamed_key = 'resources/{0}/renamed.csv'.format(resource['id'])
+        s3_client.put_object(
+            Bucket=REGULAR_BUCKET, Key=renamed_key, Body=b'x' * size)
+
+        result = CliRunner().invoke(migrate_odsp, ['--mode', 'check'])
+
+        assert result.exit_code == 0, result.output
+        rows = self._missing_both_data_rows(result.output)
+        assert len(rows) == 1
+        assert rows[0][1] == resource['id']
+        assert rows[0][7] == 'size_match'
+        assert rows[0][8] == 'regular'
+        assert rows[0][9] == renamed_key
+        assert rows[0][10] == str(size)
 
     def test_command_exits_early_when_odsp_not_configured(self, monkeypatch):
         """Command prints an error and returns immediately when ODSP bucket is not set."""
