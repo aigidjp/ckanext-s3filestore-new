@@ -214,6 +214,52 @@ class TestMigrateOdspCommand:
             BaseS3Uploader, 'get_s3_client',
             lambda self: DenyCopyClient(original_get_s3_client(self)))
 
+    def _patch_deny_acl(self, monkeypatch):
+        """Make every S3 client reject requests that specify an ACL,
+        simulating a bucket with S3 Object Ownership set to "Bucket owner
+        enforced" (ACLs disabled)."""
+        from ckanext.s3filestore.uploader import BaseS3Uploader
+        original_get_s3_client = BaseS3Uploader.get_s3_client
+
+        class DenyAclClient(object):
+            def __init__(self, real_client):
+                self._real_client = real_client
+
+            def copy(self, copy_source, bucket, key, ExtraArgs=None,
+                     **kwargs):
+                if ExtraArgs and ExtraArgs.get('ACL'):
+                    raise ClientError(
+                        {'Error': {
+                            'Code': 'AccessControlListNotSupported',
+                            'Message': 'The bucket does not allow ACLs'}},
+                        'CopyObject')
+                return self._real_client.copy(
+                    copy_source, bucket, key, ExtraArgs=ExtraArgs, **kwargs)
+
+            def __getattr__(self, name):
+                return getattr(self._real_client, name)
+
+        monkeypatch.setattr(
+            BaseS3Uploader, 'get_s3_client',
+            lambda self: DenyAclClient(original_get_s3_client(self)))
+
+    def test_copy_mode_retries_without_acl_when_bucket_disallows_acls(
+            self, s3_client, create_with_upload, monkeypatch):
+        """When the destination bucket has ACLs disabled (S3 Object
+        Ownership "Bucket owner enforced"), the server-side copy is
+        retried without an ACL instead of failing."""
+        dataset = factories.Dataset(license_id=OPEN_LICENSE)
+        resource = create_with_upload('content', 'data.csv', package_id=dataset['id'])
+        key = 'resources/{0}/data.csv'.format(resource['id'])
+
+        self._patch_deny_acl(monkeypatch)
+
+        result = CliRunner().invoke(migrate_odsp, ['--mode', 'copy'])
+
+        assert result.exit_code == 0, result.output
+        assert 'server-side copy' in result.output
+        assert self._exists(s3_client, ODSP_BUCKET, key)
+
     def test_copy_mode_falls_back_to_download_upload_when_allowed(
             self, s3_client, create_with_upload, monkeypatch):
         """When server-side copy is denied, --allow-download-fallback

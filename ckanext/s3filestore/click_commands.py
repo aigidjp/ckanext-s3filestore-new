@@ -6,7 +6,7 @@ from botocore.exceptions import ClientError
 from sqlalchemy import create_engine
 from sqlalchemy.sql import text
 from ckantoolkit import config
-from ckanext.s3filestore.uploader import BaseS3Uploader
+from ckanext.s3filestore.uploader import BaseS3Uploader, call_with_acl_fallback
 
 storage_path = config.get('ckan.storage_path',
                           '/var/lib/ckan/default/resources')
@@ -32,7 +32,7 @@ def _object_exists(client, bucket, key):
 
 
 def _copy_object(wrong_client, wrong_bucket, correct_client, correct_bucket,
-                 key, acl, allow_download_fallback):
+                 key, acl, allow_download_fallback, no_acl_buckets):
     '''Copy an object between buckets, preferring a server-side S3 copy.
 
     A server-side copy (via correct_client.copy) never transfers the
@@ -42,13 +42,22 @@ def _copy_object(wrong_client, wrong_bucket, correct_client, correct_bucket,
     denied; in that case fall back to downloading and re-uploading the
     object, but only if the caller explicitly allowed it, since that
     fallback is far more expensive in time and data transfer cost.
+
+    Either method may also be rejected with AccessControlListNotSupported
+    if correct_bucket has S3 Object Ownership set to "Bucket owner
+    enforced" (ACLs disabled); that is handled by retrying without ACL.
     '''
     try:
-        correct_client.copy(
-            {u'Bucket': wrong_bucket, u'Key': key},
-            correct_bucket, key,
-            ExtraArgs={u'ACL': acl},
-            SourceClient=wrong_client)
+        call_with_acl_fallback(
+            no_acl_buckets, correct_bucket,
+            lambda: correct_client.copy(
+                {u'Bucket': wrong_bucket, u'Key': key},
+                correct_bucket, key,
+                ExtraArgs={u'ACL': acl}, SourceClient=wrong_client),
+            lambda: correct_client.copy(
+                {u'Bucket': wrong_bucket, u'Key': key},
+                correct_bucket, key,
+                ExtraArgs={}, SourceClient=wrong_client))
         return u'server-side copy'
     except ClientError as e:
         if not (allow_download_fallback
@@ -56,11 +65,18 @@ def _copy_object(wrong_client, wrong_bucket, correct_client, correct_bucket,
                     u'AccessDenied', u'403')):
             raise
 
-    response = wrong_client.get_object(Bucket=wrong_bucket, Key=key)
-    content_type = response.get(u'ContentType', u'application/octet-stream')
-    correct_client.upload_fileobj(
-        response[u'Body'], correct_bucket, key,
-        ExtraArgs={u'ContentType': content_type, u'ACL': acl})
+    def _download_and_upload(extra_args):
+        response = wrong_client.get_object(Bucket=wrong_bucket, Key=key)
+        extra_args = dict(extra_args)
+        extra_args[u'ContentType'] = response.get(
+            u'ContentType', u'application/octet-stream')
+        correct_client.upload_fileobj(
+            response[u'Body'], correct_bucket, key, ExtraArgs=extra_args)
+
+    call_with_acl_fallback(
+        no_acl_buckets, correct_bucket,
+        lambda: _download_and_upload({u'ACL': acl}),
+        lambda: _download_and_upload({}))
     return u'download/upload fallback'
 
 
@@ -118,6 +134,7 @@ def upload_resources():
         odsp_uploader.bucket_name = odsp_bucket_name
         s3_odsp_connection = odsp_uploader.get_s3_resource()
 
+    no_acl_buckets = set()
     uploaded_resources = []
     for resource_id, file_name in resource_ids_and_names.items():
         license_id = resource_ids_and_license_ids.get(resource_id)
@@ -130,10 +147,14 @@ def upload_resources():
             target_bucket = bucket_name
         key = 'resources/{resource_id}/{file_name}'.format(
             resource_id=resource_id, file_name=file_name)
-        s3_connection.Object(target_bucket, key)\
-            .put(Body=open(resource_ids_and_paths[resource_id],
-                           u'rb'),
-                 ACL=acl)
+        with open(resource_ids_and_paths[resource_id], u'rb') as f:
+            body = f.read()
+        call_with_acl_fallback(
+            no_acl_buckets, target_bucket,
+            lambda: s3_connection.Object(target_bucket, key).put(
+                Body=body, ACL=acl),
+            lambda: s3_connection.Object(target_bucket, key).put(
+                Body=body))
         uploaded_resources.append(resource_id)
         click.secho(
             'Uploaded resource {0} ({1}) to S3 bucket {2}'.format(
@@ -172,12 +193,19 @@ def upload_assets():
     uploader = BaseS3Uploader()
     s3_connection = uploader.get_s3_resource()
 
+    no_acl_buckets = set()
     uploaded_resources = []
     for resource_id, file_name in group_ids_and_paths.items():
         key = 'storage/uploads/group/{resource_id}'.format(
             resource_id=resource_id)
-        s3_connection.Object(bucket_name, key).put(
-            Body=open(file_name, u'rb'), ACL=acl)
+        with open(file_name, u'rb') as f:
+            body = f.read()
+        call_with_acl_fallback(
+            no_acl_buckets, bucket_name,
+            lambda: s3_connection.Object(bucket_name, key).put(
+                Body=body, ACL=acl),
+            lambda: s3_connection.Object(bucket_name, key).put(
+                Body=body))
         uploaded_resources.append(resource_id)
         click.secho(
             'Uploaded resource {0} to S3'.format(file_name),
@@ -238,6 +266,7 @@ def migrate_odsp(mode, allow_download_fallback):
         fg=u'green', bold=True)
 
     counts = {u'ok': 0, u'missing_both': 0, u'needs_action': 0, u'in_both': 0}
+    no_acl_buckets = set()
 
     for resource_id, url, license_id in resources:
         if not url:
@@ -292,7 +321,7 @@ def migrate_odsp(mode, allow_download_fallback):
         if mode in (u'copy', u'move'):
             method = _copy_object(
                 wrong_client, wrong_bucket, correct_client, correct_bucket,
-                key, acl, allow_download_fallback)
+                key, acl, allow_download_fallback, no_acl_buckets)
             click.secho(
                 u'Copied resource {0} ({1}) to {2} (via {3})'.format(
                     resource_id, file_name, correct_bucket, method),

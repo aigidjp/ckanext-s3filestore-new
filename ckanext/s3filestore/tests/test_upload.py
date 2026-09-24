@@ -11,6 +11,49 @@ import ckan.tests.helpers as helpers
 
 from ckanext.s3filestore.uploader import S3Uploader
 from ckanext.s3filestore.uploader import S3ResourceUploader
+from ckanext.s3filestore.uploader import call_with_acl_fallback
+
+
+class TestCallWithAclFallback(object):
+    """Unit tests for call_with_acl_fallback. No DB/S3 access needed."""
+
+    def _denied(self, code):
+        def raiser():
+            raise ClientError(
+                {'Error': {'Code': code, 'Message': 'x'}}, 'PutObject')
+        return raiser
+
+    def test_retries_without_acl_on_access_control_list_not_supported(self):
+        no_acl_buckets = set()
+        calls = []
+
+        result = call_with_acl_fallback(
+            no_acl_buckets, 'my-bucket',
+            self._denied('AccessControlListNotSupported'),
+            lambda: calls.append('without_acl') or 'ok')
+
+        assert result == 'ok'
+        assert calls == ['without_acl']
+        assert 'my-bucket' in no_acl_buckets
+
+    def test_skips_with_acl_call_for_already_known_bucket(self):
+        no_acl_buckets = {'my-bucket'}
+        with_acl_calls = []
+
+        result = call_with_acl_fallback(
+            no_acl_buckets, 'my-bucket',
+            lambda: with_acl_calls.append('with_acl'),
+            lambda: 'ok')
+
+        assert result == 'ok'
+        assert with_acl_calls == []
+
+    def test_reraises_unrelated_client_errors(self):
+        with pytest.raises(ClientError):
+            call_with_acl_fallback(
+                set(), 'my-bucket',
+                self._denied('AccessDenied'),
+                lambda: pytest.fail('without_acl should not be called'))
 
 
 @pytest.mark.usefixtures(u'clean_db', u'clean_index', u'with_plugins')

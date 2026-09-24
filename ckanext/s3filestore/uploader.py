@@ -32,11 +32,38 @@ _max_image_size = None
 
 URL_HOST = re.compile('^https?://[^/]*/')
 
+ACL_NOT_SUPPORTED = 'AccessControlListNotSupported'
+
+# Buckets configured with S3 Object Ownership set to "Bucket owner
+# enforced" reject any request that specifies an ACL. Once a bucket is
+# found to behave this way, remember it for the life of the process so
+# later calls skip straight to the no-ACL attempt instead of failing
+# and retrying every time.
+_no_acl_buckets = set()
+
 
 def _get_underlying_file(wrapper):
     if isinstance(wrapper, FlaskFileStorage):
         return wrapper.stream
     return wrapper.file
+
+
+def call_with_acl_fallback(no_acl_buckets, bucket_name,
+                           call_with_acl, call_without_acl):
+    '''Call call_with_acl() unless bucket_name is already known not to
+    support ACLs. If it fails with AccessControlListNotSupported (S3
+    Object Ownership "Bucket owner enforced"), remember that and retry
+    via call_without_acl().
+    '''
+    if bucket_name in no_acl_buckets:
+        return call_without_acl()
+    try:
+        return call_with_acl()
+    except ClientError as e:
+        if e.response['Error']['Code'] != ACL_NOT_SUPPORTED:
+            raise
+        no_acl_buckets.add(bucket_name)
+        return call_without_acl()
 
 
 class S3FileStoreException(Exception):
@@ -153,14 +180,19 @@ class BaseS3Uploader(object):
         '''Uploads the `upload_file` to `filepath` on `self.bucket`.'''
 
         upload_file.seek(0)
+        body = upload_file.read()
 
         s3 = self.get_s3_resource()
+        acl = 'public-read' if make_public else self.acl
+        content_type = getattr(self, 'mimetype', '') or 'text/plain'
 
         try:
-            s3.Object(self.bucket_name, filepath).put(
-                Body=upload_file.read(),
-                ACL='public-read' if make_public else self.acl,
-                ContentType=getattr(self, 'mimetype', '') or 'text/plain')
+            call_with_acl_fallback(
+                _no_acl_buckets, self.bucket_name,
+                lambda: s3.Object(self.bucket_name, filepath).put(
+                    Body=body, ACL=acl, ContentType=content_type),
+                lambda: s3.Object(self.bucket_name, filepath).put(
+                    Body=body, ContentType=content_type))
             log.info("Successfully uploaded {0} to S3!".format(filepath))
         except Exception as e:
             log.error('Something went very very wrong for {0}'.format(str(e)))
